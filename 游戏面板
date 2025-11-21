@@ -1,0 +1,3206 @@
+// ==TweakpaneExtension==
+// @name         Tweakpane Ultimate
+// @description  终极参数控制面板
+// @version      3.0.4
+// @author       Assistant
+// ==/TweakpaneExtension==
+
+(function(Scratch) {
+  'use strict';
+
+  class TweakpaneUltimate {
+    constructor() {
+      this.params = new Map();
+      this.containers = new Map();
+      this.controls = new Map();
+      this.groups = new Map();
+      this.isDragging = false;
+      this.dragOffset = { x: 0, y: 0 };
+      this.panelPosition = { x: 10, y: 10 };
+      this.panelSize = { width: 320, height: 500 };
+      this.isInitialized = false;
+      this.controlVisibility = new Map();
+      this.groupVisibility = new Map();
+      this.theme = 'light';
+      this.panelOpacity = 100;
+      this.isLocked = false;
+      this._eventHandlers = new Map();
+      this._debounceTimers = new Map();
+      this.controlLocks = new Map();
+      
+      // 图片管理
+      this.images = new Map();
+      this.imagePreviews = new Map();
+      this.maxImageSize = 5 * 1024 * 1024; // 5MB
+      this.supportedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+      
+      // 控制按键状态
+      this.controlButtons = new Map();
+      this.isMinimized = false;
+      this.isFullscreen = false;
+      
+      // 按钮状态跟踪
+      this.buttonStates = new Map();
+      
+      this._loadSettings();
+      this._setupGlobalListeners();
+    }
+
+    getInfo() {
+      return {
+        id: 'tweakpaneUltimate',
+        name: '参数面板 Ultimate',
+        color1: '#4A90E2',
+        color2: '#357ABD',
+        blocks: [
+          {
+            opcode: 'createPanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '创建控制面板',
+            arguments: {}
+          },
+          {
+            opcode: 'createPanelAtPosition',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '在位置 X [X] Y [Y] 创建面板',
+            arguments: {
+              X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 },
+              Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 }
+            }
+          },
+          '---',
+          {
+            opcode: 'addNumber',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加数字 [NAME] 初始值 [VALUE] 步长 [STEP]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '速度' },
+              VALUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 50 },
+              STEP: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
+            }
+          },
+          {
+            opcode: 'addSlider',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加滑块 [NAME] 值 [VALUE] 最小 [MIN] 最大 [MAX] 步长 [STEP]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' },
+              VALUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 50 },
+              MIN: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
+              MAX: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 },
+              STEP: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
+            }
+          },
+          {
+            opcode: 'addToggle',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加开关 [NAME] 初始值 [VALUE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '显示' },
+              VALUE: { type: Scratch.ArgumentType.BOOLEAN, defaultValue: true }
+            }
+          },
+          {
+            opcode: 'addColor',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加颜色 [NAME] 初始值 [VALUE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '颜色' },
+              VALUE: { type: Scratch.ArgumentType.STRING, defaultValue: '#ff0055' }
+            }
+          },
+          {
+            opcode: 'addText',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加文本 [NAME] 初始值 [VALUE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' },
+              VALUE: { type: Scratch.ArgumentType.STRING, defaultValue: '默认文本' }
+            }
+          },
+          {
+            opcode: 'addTextArea',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加多行文本 [NAME] 初始值 [VALUE] 行数 [ROWS]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '描述' },
+              VALUE: { type: Scratch.ArgumentType.STRING, defaultValue: '请输入描述...' },
+              ROWS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 3 }
+            }
+          },
+          {
+            opcode: 'addButton',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加按钮 [NAME] 点击时广播 [MESSAGE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '重置' },
+              MESSAGE: { type: Scratch.ArgumentType.STRING, defaultValue: '重置参数' }
+            }
+          },
+          {
+            opcode: 'addStateButton',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加状态按钮 [NAME] 点击时广播 [MESSAGE] 初始状态 [INITIAL_STATE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '开关' },
+              MESSAGE: { type: Scratch.ArgumentType.STRING, defaultValue: '状态切换' },
+              INITIAL_STATE: {
+                type: Scratch.ArgumentType.NUMBER,
+                defaultValue: 0,
+                menu: 'buttonStates'
+              }
+            }
+          },
+          {
+            opcode: 'getButtonState',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '获取按钮 [NAME] 的状态',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '开关' }
+            }
+          },
+          {
+            opcode: 'setButtonState',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置按钮 [NAME] 状态为 [STATE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '开关' },
+              STATE: {
+                type: Scratch.ArgumentType.NUMBER,
+                defaultValue: 1,
+                menu: 'buttonStates'
+              }
+            }
+          },
+          {
+            opcode: 'resetAllButtonStates',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '重置所有按钮状态',
+            arguments: {}
+          },
+          {
+            opcode: 'addDropdown',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加下拉框 [NAME] 选项 [OPTIONS] 默认值 [VALUE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '模式' },
+              OPTIONS: { type: Scratch.ArgumentType.STRING, defaultValue: '简单,中等,困难' },
+              VALUE: { type: Scratch.ArgumentType.STRING, defaultValue: '中等' }
+            }
+          },
+          {
+            opcode: 'addLabel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加标签 [NAME] 内容 [CONTENT]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '说明' },
+              CONTENT: { type: Scratch.ArgumentType.STRING, defaultValue: '这是一个说明标签' }
+            }
+          },
+          {
+            opcode: 'addImageLoader',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '添加图片载入器 [NAME]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '背景图片' }
+            }
+          },
+          {
+            opcode: 'getImageDataURL',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '获取图片 [NAME] 的DataURL',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '背景图片' }
+            }
+          },
+          {
+            opcode: 'getImageWidth',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '获取图片 [NAME] 的宽度',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '背景图片' }
+            }
+          },
+          {
+            opcode: 'getImageHeight',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '获取图片 [NAME] 的高度',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '背景图片' }
+            }
+          },
+          {
+            opcode: 'hasImage',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '图片 [NAME] 是否已加载',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '背景图片' }
+            }
+          },
+          {
+            opcode: 'removeImage',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '移除图片 [NAME]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '背景图片' }
+            }
+          },
+          {
+            opcode: 'clearAllImages',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '清除所有图片',
+            arguments: {}
+          },
+          '---',
+          {
+            opcode: 'createGroup',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '创建控件组 [GROUP_NAME]',
+            arguments: {
+              GROUP_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '图形设置' }
+            }
+          },
+          {
+            opcode: 'addToGroup',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '将控件 [CONTROL_NAME] 添加到组 [GROUP_NAME]',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' },
+              GROUP_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '图形设置' }
+            }
+          },
+          {
+            opcode: 'showGroup',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '显示组 [GROUP_NAME]',
+            arguments: {
+              GROUP_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '图形设置' }
+            }
+          },
+          {
+            opcode: 'hideGroup',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '隐藏组 [GROUP_NAME]',
+            arguments: {
+              GROUP_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '图形设置' }
+            }
+          },
+          {
+            opcode: 'toggleGroup',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '切换组 [GROUP_NAME] 显示',
+            arguments: {
+              GROUP_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '图形设置' }
+            }
+          },
+          '---',
+          {
+            opcode: 'showControl',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '显示控件 [CONTROL_NAME]',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'hideControl',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '隐藏控件 [CONTROL_NAME]',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'toggleControl',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '切换控件 [CONTROL_NAME] 显示',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'showAllControls',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '显示所有控件',
+            arguments: {}
+          },
+          {
+            opcode: 'hideAllControls',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '隐藏所有控件',
+            arguments: {}
+          },
+          {
+            opcode: 'isControlVisible',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '控件 [CONTROL_NAME] 是否可见',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'removeControl',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '删除控件 [CONTROL_NAME]',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          '---',
+          {
+            opcode: 'lockPanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '锁定面板位置',
+            arguments: {}
+          },
+          {
+            opcode: 'unlockPanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '解锁面板位置',
+            arguments: {}
+          },
+          {
+            opcode: 'togglePanelLock',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '切换面板锁定状态',
+            arguments: {}
+          },
+          {
+            opcode: 'isPanelLocked',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '面板是否已锁定',
+            arguments: {}
+          },
+          {
+            opcode: 'lockControl',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '锁定控件 [CONTROL_NAME]',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'unlockControl',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '解锁控件 [CONTROL_NAME]',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'isControlLocked',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '控件 [CONTROL_NAME] 是否锁定',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '大小' }
+            }
+          },
+          {
+            opcode: 'lockAllControls',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '锁定所有控件',
+            arguments: {}
+          },
+          {
+            opcode: 'unlockAllControls',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '解锁所有控件',
+            arguments: {}
+          },
+          '---',
+          {
+            opcode: 'getValue',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '获取 [NAME] 的值',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '速度' }
+            }
+          },
+          {
+            opcode: 'getStringValue',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '获取字符串 [NAME] 的值',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' }
+            }
+          },
+          {
+            opcode: 'setValue',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置 [NAME] 为 [VALUE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '速度' },
+              VALUE: { type: Scratch.ArgumentType.STRING, defaultValue: '75' }
+            }
+          },
+          {
+            opcode: 'setStringValue',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置字符串 [NAME] 为 [VALUE]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' },
+              VALUE: { type: Scratch.ArgumentType.STRING, defaultValue: '新名称' }
+            }
+          },
+          {
+            opcode: 'resetAllValues',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '重置所有值为默认值',
+            arguments: {}
+          },
+          {
+            opcode: 'resetControlToDefault',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '重置控件 [CONTROL_NAME] 为默认值',
+            arguments: {
+              CONTROL_NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '速度' }
+            }
+          },
+          '---',
+          {
+            opcode: 'setPanelPosition',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置面板位置 X [X] Y [Y]',
+            arguments: {
+              X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 },
+              Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 }
+            }
+          },
+          {
+            opcode: 'setPanelSize',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置面板宽度 [WIDTH] 高度 [HEIGHT]',
+            arguments: {
+              WIDTH: { type: Scratch.ArgumentType.NUMBER, defaultValue: 320 },
+              HEIGHT: { type: Scratch.ArgumentType.NUMBER, defaultValue: 500 }
+            }
+          },
+          {
+            opcode: 'setPanelCorner',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置面板位置到 [CORNER]',
+            arguments: {
+              CORNER: {
+                type: Scratch.ArgumentType.STRING,
+                menu: 'corners',
+                defaultValue: 'top-right'
+              }
+            }
+          },
+          {
+            opcode: 'setPanelTheme',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置面板主题 [THEME]',
+            arguments: {
+              THEME: {
+                type: Scratch.ArgumentType.STRING,
+                menu: 'themes',
+                defaultValue: 'light'
+              }
+            }
+          },
+          {
+            opcode: 'setPanelOpacity',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '设置面板透明度 [OPACITY]',
+            arguments: {
+              OPACITY: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 }
+            }
+          },
+          '---',
+          {
+            opcode: 'showPanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '显示面板',
+            arguments: {}
+          },
+          {
+            opcode: 'hidePanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '隐藏面板',
+            arguments: {}
+          },
+          {
+            opcode: 'togglePanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '切换面板显示',
+            arguments: {}
+          },
+          {
+            opcode: 'destroyPanel',
+            blockType: Scratch.BlockType.COMMAND,
+            text: '销毁面板',
+            arguments: {}
+          },
+          '---',
+          {
+            opcode: 'getPanelX',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '面板X位置',
+            arguments: {}
+          },
+          {
+            opcode: 'getPanelY',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '面板Y位置',
+            arguments: {}
+          },
+          {
+            opcode: 'getControlCount',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '控件数量',
+            arguments: {}
+          },
+          {
+            opcode: 'getVisibleControlCount',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '可见控件数量',
+            arguments: {}
+          },
+          {
+            opcode: 'getPanelWidth',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '面板宽度',
+            arguments: {}
+          },
+          {
+            opcode: 'getPanelHeight',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '面板高度',
+            arguments: {}
+          },
+          {
+            opcode: 'getStringLength',
+            blockType: Scratch.BlockType.REPORTER,
+            text: '字符串 [NAME] 的长度',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' }
+            }
+          },
+          {
+            opcode: 'stringContains',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '字符串 [NAME] 包含 [TEXT]',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' },
+              TEXT: { type: Scratch.ArgumentType.STRING, defaultValue: '文本' }
+            }
+          },
+          {
+            opcode: 'stringStartsWith',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '字符串 [NAME] 以 [TEXT] 开头',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' },
+              TEXT: { type: Scratch.ArgumentType.STRING, defaultValue: '前' }
+            }
+          },
+          {
+            opcode: 'stringEndsWith',
+            blockType: Scratch.BlockType.BOOLEAN,
+            text: '字符串 [NAME] 以 [TEXT] 结尾',
+            arguments: {
+              NAME: { type: Scratch.ArgumentType.STRING, defaultValue: '名称' },
+              TEXT: { type: Scratch.ArgumentType.STRING, defaultValue: '后' }
+            }
+          }
+        ],
+        menus: {
+          corners: {
+            items: [
+              'top-left',
+              'top-right', 
+              'bottom-left',
+              'bottom-right',
+              'center'
+            ]
+          },
+          themes: {
+            items: [
+              'light',
+              'dark',
+              'blue',
+              'green',
+              'purple'
+            ]
+          },
+          buttonStates: {
+            items: [
+              { text: '未按下 (0)', value: 0 },
+              { text: '按下 (1)', value: 1 }
+            ]
+          }
+        }
+      };
+    }
+
+    _loadSettings() {
+      try {
+        const saved = localStorage.getItem('tweakpane-ultimate-settings');
+        if (saved) {
+          const settings = JSON.parse(saved);
+          this.panelPosition = settings.position || { x: 10, y: 10 };
+          this.panelSize = settings.size || { width: 320, height: 500 };
+          this.params = new Map(settings.params || []);
+          this.theme = settings.theme || 'light';
+          this.controlVisibility = new Map(settings.controlVisibility || []);
+          this.groupVisibility = new Map(settings.groupVisibility || []);
+          this.panelOpacity = settings.opacity || 100;
+          this.isLocked = settings.isLocked || false;
+          this.controlLocks = new Map(settings.controlLocks || []);
+          this.isMinimized = settings.isMinimized || false;
+          this.isFullscreen = settings.isFullscreen || false;
+          this.buttonStates = new Map(settings.buttonStates || []);
+          
+          if (settings.images) {
+            this.images = new Map(settings.images);
+          }
+        }
+      } catch (e) {
+        console.warn('无法加载面板设置:', e);
+      }
+    }
+
+    _saveSettings() {
+      this._debounce('saveSettings', () => {
+        try {
+          const settings = {
+            position: this.panelPosition,
+            size: this.panelSize,
+            params: Array.from(this.params.entries()),
+            theme: this.theme,
+            controlVisibility: Array.from(this.controlVisibility.entries()),
+            groupVisibility: Array.from(this.groupVisibility.entries()),
+            opacity: this.panelOpacity,
+            isLocked: this.isLocked,
+            controlLocks: Array.from(this.controlLocks.entries()),
+            images: Array.from(this.images.entries()),
+            isMinimized: this.isMinimized,
+            isFullscreen: this.isFullscreen,
+            buttonStates: Array.from(this.buttonStates.entries()),
+            timestamp: Date.now()
+          };
+          localStorage.setItem('tweakpane-ultimate-settings', JSON.stringify(settings));
+        } catch (e) {
+          console.warn('无法保存面板设置:', e);
+        }
+      }, 300);
+    }
+
+    _debounce(id, fn, delay) {
+      clearTimeout(this._debounceTimers.get(id));
+      this._debounceTimers.set(id, setTimeout(fn, delay));
+    }
+
+    _setupGlobalListeners() {
+      this._addGlobalListener('resize', () => {
+        this._constrainPanelPosition();
+      });
+    }
+
+    _addGlobalListener(event, handler) {
+      window.addEventListener(event, handler);
+      if (!this._eventHandlers.has(event)) {
+        this._eventHandlers.set(event, []);
+      }
+      this._eventHandlers.get(event).push(handler);
+    }
+
+    _removeGlobalListeners() {
+      for (const [event, handlers] of this._eventHandlers) {
+        for (const handler of handlers) {
+          window.removeEventListener(event, handler);
+        }
+      }
+      this._eventHandlers.clear();
+    }
+
+    createPanel() {
+      this._createPanelAtPosition(this.panelPosition.x, this.panelPosition.y);
+    }
+
+    createPanelAtPosition(args) {
+      const x = Scratch.Cast.toNumber(args.X);
+      const y = Scratch.Cast.toNumber(args.Y);
+      this._createPanelAtPosition(x, y);
+    }
+
+    _createPanelAtPosition(x, y) {
+      if (this.isInitialized) {
+        this._updatePanelPosition(x, y);
+        return;
+      }
+      
+      const container = this._createPanelContainer(x, y);
+      
+      container.appendChild(this._createTitleBar());
+      container.appendChild(this._createToolbar());
+      container.appendChild(this._createContentArea());
+
+      document.body.appendChild(container);
+
+      this.containers.set('main', container);
+      this.containers.set('content', container.querySelector('#tweakpane-content'));
+      this.isInitialized = true;
+
+      this._setupDragging(container, container.querySelector('.title-bar'));
+      this._constrainPanelPosition();
+      this._updateLockState();
+      
+      if (this.isMinimized) {
+        this._minimizePanel();
+      }
+      if (this.isFullscreen) {
+        this._enterFullscreen();
+      }
+      
+      this._saveSettings();
+    }
+
+    _updatePanelPosition(x, y) {
+      const container = this.containers.get('main');
+      if (container) {
+        container.style.left = `${x}px`;
+        container.style.top = `${y}px`;
+        this.panelPosition = { x, y };
+        this._constrainPanelPosition();
+        this._saveSettings();
+      }
+    }
+
+    _createPanelContainer(x, y) {
+      const container = document.createElement('div');
+      container.id = 'tweakpane-ultimate';
+      container.className = `tweakpane-theme-${this.theme}`;
+      
+      Object.assign(container.style, {
+        position: 'fixed',
+        left: `${x}px`,
+        top: `${y}px`,
+        width: `${this.panelSize.width}px`,
+        minHeight: '120px',
+        maxHeight: '85vh',
+        background: this._getThemeColor('background'),
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '12px',
+        padding: '0',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontSize: '14px',
+        zIndex: '10000',
+        overflow: 'hidden',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.15)',
+        resize: this.isLocked ? 'none' : 'both',
+        display: 'flex',
+        flexDirection: 'column',
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        opacity: `${this.panelOpacity}%`
+      });
+
+      return container;
+    }
+
+    _createTitleBar() {
+      const titleBar = document.createElement('div');
+      titleBar.className = 'title-bar';
+      Object.assign(titleBar.style, {
+        padding: '14px 16px',
+        background: this._getThemeColor('header'),
+        borderBottom: `1px solid ${this._getThemeColor('border')}`,
+        cursor: this.isLocked ? 'default' : 'move',
+        userSelect: 'none',
+        fontWeight: '600',
+        fontSize: '14px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        color: this._getThemeColor('text'),
+        position: 'relative'
+      });
+
+      const titleText = document.createElement('span');
+      titleText.textContent = '🎛️ 参数控制面板 v3.0.4';
+      titleBar.appendChild(titleText);
+
+      const controls = document.createElement('div');
+      controls.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+
+      const buttons = [
+        { 
+          id: 'lock',
+          text: this.isLocked ? '🔒' : '🔓', 
+          title: this.isLocked ? '解锁面板' : '锁定面板', 
+          action: () => this.togglePanelLock(),
+          visible: true
+        },
+        { 
+          id: 'minimize',
+          text: '−', 
+          title: this.isMinimized ? '恢复面板' : '最小化', 
+          action: () => this._toggleMinimize(),
+          visible: true
+        },
+        { 
+          id: 'fullscreen',
+          text: '⛶', 
+          title: this.isFullscreen ? '退出全屏' : '全屏', 
+          action: () => this._toggleFullscreen(),
+          visible: true
+        },
+        { 
+          id: 'close',
+          text: '×', 
+          title: '关闭面板', 
+          action: () => this.hidePanel(),
+          visible: true
+        }
+      ];
+
+      buttons.forEach(btn => {
+        const button = this._createIconButton(btn.text, btn.title, btn.id);
+        button.addEventListener('click', (e) => {
+          e.stopPropagation();
+          btn.action();
+        });
+        controls.appendChild(button);
+        this.controlButtons.set(btn.id, button);
+      });
+
+      titleBar.appendChild(controls);
+      return titleBar;
+    }
+
+    _createToolbar() {
+      const toolbar = document.createElement('div');
+      toolbar.className = 'toolbar';
+      Object.assign(toolbar.style, {
+        padding: '10px 12px',
+        background: this._getThemeColor('toolbar'),
+        borderBottom: `1px solid ${this._getThemeColor('borderLight')}`,
+        display: 'flex',
+        gap: '6px',
+        fontSize: '12px',
+        flexWrap: 'wrap',
+        transition: 'all 0.3s ease'
+      });
+
+      const buttons = [
+        { 
+          id: 'reset',
+          text: '重置', 
+          action: () => this.resetAllValues(), 
+          title: '重置所有值为默认值',
+          visible: true
+        },
+        { 
+          id: 'showAll',
+          text: '显示全部', 
+          action: () => this.showAllControls(), 
+          title: '显示所有控件',
+          visible: true
+        },
+        { 
+          id: 'hideAll',
+          text: '隐藏全部', 
+          action: () => this.hideAllControls(), 
+          title: '隐藏所有控件',
+          visible: true
+        },
+        { 
+          id: 'lockAll',
+          text: '锁定全部', 
+          action: () => this.lockAllControls(), 
+          title: '锁定所有控件',
+          visible: true
+        },
+        { 
+          id: 'unlockAll',
+          text: '解锁全部', 
+          action: () => this.unlockAllControls(), 
+          title: '解锁所有控件',
+          visible: true
+        },
+        { 
+          id: 'imageManager',
+          text: '图片管理', 
+          action: () => this._showImageManager(), 
+          title: '管理所有图片',
+          visible: true
+        },
+        { 
+          id: 'export',
+          text: '导出', 
+          action: () => this._exportSettings(), 
+          title: '导出设置',
+          visible: true
+        },
+        { 
+          id: 'import',
+          text: '导入', 
+          action: () => this._importSettings(), 
+          title: '导入设置',
+          visible: true
+        }
+      ];
+
+      buttons.forEach(btn => {
+        const button = this._createToolbarButton(btn.text, btn.action, btn.title, btn.id);
+        toolbar.appendChild(button);
+        this.controlButtons.set(btn.id, button);
+      });
+
+      return toolbar;
+    }
+
+    _createContentArea() {
+      const content = document.createElement('div');
+      content.id = 'tweakpane-content';
+      Object.assign(content.style, {
+        flex: '1',
+        padding: '16px',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        maxHeight: 'calc(85vh - 120px)',
+        background: this._getThemeColor('content')
+      });
+
+      this._addScrollbarStyles();
+      this._createEmptyState(content);
+      return content;
+    }
+
+    _addScrollbarStyles() {
+      const style = document.createElement('style');
+      style.textContent = `
+        #tweakpane-ultimate {
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        #tweakpane-ultimate.locked {
+          box-shadow: 0 10px 30px rgba(255, 0, 0, 0.1);
+        }
+        #tweakpane-content::-webkit-scrollbar {
+          width: 6px;
+        }
+        #tweakpane-content::-webkit-scrollbar-track {
+          background: ${this._getThemeColor('toolbar')};
+          border-radius: 3px;
+        }
+        #tweakpane-content::-webkit-scrollbar-thumb {
+          background: ${this._getThemeColor('border')};
+          border-radius: 3px;
+        }
+        #tweakpane-content::-webkit-scrollbar-thumb:hover {
+          background: ${this._getThemeColor('textSecondary')};
+        }
+        .control-item.locked {
+          opacity: 0.7;
+          position: relative;
+        }
+        .control-item.locked::after {
+          content: '🔒';
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          font-size: 12px;
+          opacity: 0.6;
+        }
+        .control-item.locked input,
+        .control-item.locked select,
+        .control-item.locked textarea,
+        .control-item.locked button {
+          pointer-events: none;
+          opacity: 0.6;
+        }
+        .image-preview {
+          max-width: 100%;
+          max-height: 150px;
+          border-radius: 8px;
+          margin-top: 8px;
+          border: 2px dashed ${this._getThemeColor('border')};
+        }
+        .image-info {
+          font-size: 12px;
+          color: ${this._getThemeColor('textSecondary')};
+          margin-top: 4px;
+        }
+        .image-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 8px;
+        }
+        @keyframes pulse {
+          0% { opacity: 0.8; }
+          50% { opacity: 1; }
+          100% { opacity: 0.8; }
+        }
+        .title-bar button[data-button-id="lock"] {
+          animation: none;
+        }
+        .title-bar button[data-button-id="lock"].locked {
+          animation: pulse 2s infinite;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    _createEmptyState(content) {
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      emptyState.innerHTML = `
+        <div style="text-align: center; color: ${this._getThemeColor('textSecondary')}; padding: 40px 20px;">
+          <div style="font-size: 48px; margin-bottom: 12px;">🎛️</div>
+          <div style="font-size: 16px; margin-bottom: 8px; font-weight: 500;">暂无参数控件</div>
+          <div style="font-size: 13px; opacity: 0.7;">使用积木块添加控件来开始配置</div>
+        </div>
+      `;
+      content.appendChild(emptyState);
+    }
+
+    _createIconButton(text, title, id) {
+      const btn = document.createElement('button');
+      btn.innerHTML = text;
+      btn.title = title;
+      btn.dataset.buttonId = id;
+      
+      Object.assign(btn.style, {
+        width: '28px',
+        height: '28px',
+        border: 'none',
+        background: 'transparent',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        color: this._getThemeColor('text'),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'all 0.2s ease',
+        opacity: '0.8',
+        position: 'relative'
+      });
+
+      btn.addEventListener('mouseenter', () => {
+        if (!this.isLocked || id === 'lock' || id === 'close') {
+          btn.style.background = this._getThemeColor('hover');
+          btn.style.opacity = '1';
+          btn.style.transform = 'scale(1.1)';
+        }
+      });
+      
+      btn.addEventListener('mouseleave', () => {
+        btn.style.background = 'transparent';
+        btn.style.opacity = '0.8';
+        btn.style.transform = 'scale(1)';
+      });
+
+      if (id === 'lock') {
+        btn.style.color = this.isLocked ? '#ff6b6b' : this._getThemeColor('text');
+      }
+
+      return btn;
+    }
+
+    _createToolbarButton(text, action, title = '', id) {
+      const btn = document.createElement('button');
+      btn.textContent = text;
+      btn.title = title;
+      btn.dataset.buttonId = id;
+      
+      Object.assign(btn.style, {
+        padding: '6px 10px',
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '6px',
+        background: this._getThemeColor('button'),
+        color: this._getThemeColor('text'),
+        cursor: 'pointer',
+        fontSize: '12px',
+        fontWeight: '500',
+        whiteSpace: 'nowrap',
+        transition: 'all 0.2s ease',
+        opacity: '0.9'
+      });
+
+      btn.addEventListener('mouseenter', () => {
+        btn.style.background = this._getThemeColor('hover');
+        btn.style.opacity = '1';
+        btn.style.transform = 'translateY(-1px)';
+      });
+      
+      btn.addEventListener('mouseleave', () => {
+        btn.style.background = this._getThemeColor('button');
+        btn.style.opacity = '0.9';
+        btn.style.transform = 'translateY(0)';
+      });
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        action();
+      });
+
+      return btn;
+    }
+
+    addImageLoader(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      this._addControl(name, 'image', null);
+    }
+
+    _createImageInput(name, value, options, isLocked) {
+      const container = document.createElement('div');
+      
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = this.supportedImageTypes.join(',');
+      fileInput.style.display = 'none';
+      
+      const selectButton = document.createElement('button');
+      selectButton.textContent = '选择图片';
+      selectButton.disabled = isLocked;
+      Object.assign(selectButton.style, {
+        padding: '8px 16px',
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '6px',
+        background: this._getThemeColor('button'),
+        color: this._getThemeColor('text'),
+        cursor: isLocked ? 'default' : 'pointer',
+        fontSize: '12px',
+        fontWeight: '500'
+      });
+
+      selectButton.addEventListener('click', () => {
+        if (!isLocked) {
+          fileInput.click();
+        }
+      });
+
+      const previewContainer = document.createElement('div');
+      previewContainer.style.cssText = 'margin-top: 12px; text-align: center;';
+      
+      const previewImg = document.createElement('img');
+      previewImg.className = 'image-preview';
+      previewImg.style.display = 'none';
+      
+      const imageInfo = document.createElement('div');
+      imageInfo.className = 'image-info';
+      
+      const imageActions = document.createElement('div');
+      imageActions.className = 'image-actions';
+      imageActions.style.display = 'none';
+      
+      const removeButton = this._createToolbarButton('移除', () => {
+        this._removeImage(name);
+        this._updateImagePreview(name, previewImg, imageInfo, imageActions);
+      });
+      
+      const replaceButton = this._createToolbarButton('替换', () => {
+        fileInput.click();
+      });
+      
+      imageActions.appendChild(replaceButton);
+      imageActions.appendChild(removeButton);
+
+      previewContainer.appendChild(previewImg);
+      previewContainer.appendChild(imageInfo);
+      previewContainer.appendChild(imageActions);
+
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          this._handleImageUpload(name, file, previewImg, imageInfo, imageActions);
+        }
+      });
+
+      container.appendChild(fileInput);
+      container.appendChild(selectButton);
+      container.appendChild(previewContainer);
+
+      if (this.images.has(name)) {
+        this._updateImagePreview(name, previewImg, imageInfo, imageActions);
+      }
+
+      return container;
+    }
+
+    _handleImageUpload(name, file, previewImg, imageInfo, imageActions) {
+      if (!this.supportedImageTypes.includes(file.type)) {
+        this._showNotification(`不支持的文件类型: ${file.type}`, 3000);
+        return;
+      }
+
+      if (file.size > this.maxImageSize) {
+        this._showNotification(`文件太大: ${(file.size / 1024 / 1024).toFixed(2)}MB (最大5MB)`, 3000);
+        return;
+      }
+
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          this.images.set(name, {
+            dataURL: e.target.result,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            width: img.width,
+            height: img.height,
+            timestamp: Date.now()
+          });
+
+          this._updateImagePreview(name, previewImg, imageInfo, imageActions);
+          
+          this._saveSettings();
+          this._showNotification(`图片 "${name}" 加载成功`);
+        };
+        img.onerror = () => {
+          this._showNotification('图片加载失败', 3000);
+        };
+        img.src = e.target.result;
+      };
+      
+      reader.onerror = () => {
+        this._showNotification('文件读取失败', 3000);
+      };
+      
+      reader.readAsDataURL(file);
+    }
+
+    _updateImagePreview(name, previewImg, imageInfo, imageActions) {
+      const imageData = this.images.get(name);
+      
+      if (imageData) {
+        previewImg.src = imageData.dataURL;
+        previewImg.style.display = 'block';
+        
+        imageInfo.textContent = `${imageData.name} (${imageData.width}×${imageData.height})`;
+        imageInfo.style.display = 'block';
+        
+        imageActions.style.display = 'flex';
+      } else {
+        previewImg.style.display = 'none';
+        imageInfo.style.display = 'none';
+        imageActions.style.display = 'none';
+      }
+    }
+
+    _removeImage(name) {
+      if (this.images.has(name)) {
+        this.images.delete(name);
+        this._saveSettings();
+        this._showNotification(`图片 "${name}" 已移除`);
+      }
+    }
+
+    _showImageManager() {
+      const dialog = document.createElement('div');
+      dialog.className = 'image-manager-dialog';
+      Object.assign(dialog.style, {
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        background: this._getThemeColor('background'),
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '12px',
+        padding: '20px',
+        zIndex: '10001',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+        minWidth: '400px',
+        maxWidth: '600px',
+        maxHeight: '80vh',
+        overflow: 'auto'
+      });
+
+      const title = document.createElement('h3');
+      title.textContent = '图片管理器';
+      title.style.margin = '0 0 15px 0';
+      dialog.appendChild(title);
+
+      if (this.images.size === 0) {
+        const emptyMessage = document.createElement('div');
+        emptyMessage.textContent = '暂无图片';
+        emptyMessage.style.cssText = 'text-align: center; color: #999; padding: 40px 0;';
+        dialog.appendChild(emptyMessage);
+      } else {
+        const imageList = document.createElement('div');
+        imageList.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
+
+        this.images.forEach((imageData, name) => {
+          const imageItem = document.createElement('div');
+          imageItem.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border: 1px solid ${this._getThemeColor('borderLight')};
+            border-radius: 8px;
+            background: ${this._getThemeColor('background')};
+          `;
+
+          const preview = document.createElement('img');
+          preview.src = imageData.dataURL;
+          preview.style.cssText = 'width: 60px; height: 60px; object-fit: cover; border-radius: 4px;';
+          
+          const info = document.createElement('div');
+          info.style.cssText = 'flex: 1;';
+          info.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 4px;">${name}</div>
+            <div style="font-size: 12px; color: ${this._getThemeColor('textSecondary')};">
+              ${imageData.name} • ${imageData.width}×${imageData.height} • ${(imageData.size / 1024).toFixed(1)}KB
+            </div>
+          `;
+
+          const removeBtn = this._createIconButton('×', '删除图片');
+          removeBtn.addEventListener('click', () => {
+            this._removeImage(name);
+            dialog.remove();
+            this._showImageManager();
+          });
+
+          imageItem.appendChild(preview);
+          imageItem.appendChild(info);
+          imageItem.appendChild(removeBtn);
+          imageList.appendChild(imageItem);
+        });
+
+        dialog.appendChild(imageList);
+      }
+
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display: flex; justify-content: flex-end; margin-top: 15px; gap: 8px;';
+
+      const clearAllBtn = this._createToolbarButton('清空所有', () => {
+        if (this.images.size > 0 && confirm('确定要删除所有图片吗？')) {
+          this.clearAllImages();
+          dialog.remove();
+        }
+      });
+
+      const closeBtn = this._createToolbarButton('关闭', () => {
+        dialog.remove();
+      });
+
+      actions.appendChild(clearAllBtn);
+      actions.appendChild(closeBtn);
+      dialog.appendChild(actions);
+
+      document.body.appendChild(dialog);
+
+      const closeOnOutsideClick = (e) => {
+        if (!dialog.contains(e.target)) {
+          dialog.remove();
+          document.removeEventListener('click', closeOnOutsideClick);
+        }
+      };
+      setTimeout(() => {
+        document.addEventListener('click', closeOnOutsideClick);
+      }, 100);
+    }
+
+    getImageDataURL(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const imageData = this.images.get(name);
+      return imageData ? imageData.dataURL : '';
+    }
+
+    getImageWidth(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const imageData = this.images.get(name);
+      return imageData ? imageData.width : 0;
+    }
+
+    getImageHeight(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const imageData = this.images.get(name);
+      return imageData ? imageData.height : 0;
+    }
+
+    hasImage(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      return this.images.has(name);
+    }
+
+    removeImage(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      this._removeImage(name);
+    }
+
+    clearAllImages() {
+      this.images.clear();
+      this._saveSettings();
+      this._showNotification('所有图片已清除');
+    }
+
+    _showNotification(message, duration = 2000) {
+      const notification = document.createElement('div');
+      notification.textContent = message;
+      Object.assign(notification.style, {
+        position: 'fixed',
+        top: '20px',
+        right: '20px',
+        background: '#4A90E2',
+        color: 'white',
+        padding: '12px 20px',
+        borderRadius: '8px',
+        zIndex: '10002',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        transform: 'translateX(100%)',
+        transition: 'transform 0.3s ease'
+      });
+      
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.style.transform = 'translateX(0)';
+      }, 10);
+      
+      setTimeout(() => {
+        notification.style.transform = 'translateX(100%)';
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 300);
+      }, duration);
+    }
+
+    _getThemeColor(type) {
+      const themes = {
+        light: {
+          background: '#ffffff',
+          header: '#f8f9fa',
+          toolbar: '#f1f3f4',
+          content: '#ffffff',
+          border: '#dadce0',
+          borderLight: '#e8eaed',
+          text: '#3c4043',
+          textSecondary: '#5f6368',
+          button: '#ffffff',
+          hover: '#f1f3f4',
+          groupHeader: '#e8f0fe',
+          groupBorder: '#bdc1c6'
+        },
+        dark: {
+          background: '#1e1e1e',
+          header: '#2d2d2d',
+          toolbar: '#252525',
+          content: '#1e1e1e',
+          border: '#404040',
+          borderLight: '#333333',
+          text: '#ffffff',
+          textSecondary: '#aaaaaa',
+          button: '#2d2d2d',
+          hover: '#3d3d3d',
+          groupHeader: '#2a2a2a',
+          groupBorder: '#444444'
+        },
+        blue: {
+          background: '#ffffff',
+          header: '#e3f2fd',
+          toolbar: '#bbdefb',
+          content: '#ffffff',
+          border: '#90caf9',
+          borderLight: '#c5cae9',
+          text: '#1565c0',
+          textSecondary: '#42a5f5',
+          button: '#e3f2fd',
+          hover: '#bbdefb',
+          groupHeader: '#e1f5fe',
+          groupBorder: '#81d4fa'
+        },
+        green: {
+          background: '#ffffff',
+          header: '#e8f5e9',
+          toolbar: '#c8e6c9',
+          content: '#ffffff',
+          border: '#a5d6a7',
+          borderLight: '#c8e6c9',
+          text: '#2e7d32',
+          textSecondary: '#4caf50',
+          button: '#e8f5e9',
+          hover: '#c8e6c9',
+          groupHeader: '#e8f5e9',
+          groupBorder: '#a5d6a7'
+        },
+        purple: {
+          background: '#ffffff',
+          header: '#f3e5f5',
+          toolbar: '#e1bee7',
+          content: '#ffffff',
+          border: '#ce93d8',
+          borderLight: '#e1bee7',
+          text: '#7b1fa2',
+          textSecondary: '#ab47bc',
+          button: '#f3e5f5',
+          hover: '#e1bee7',
+          groupHeader: '#f3e5f5',
+          groupBorder: '#ce93d8'
+        }
+      };
+
+      return themes[this.theme]?.[type] || themes.light[type];
+    }
+
+    _refreshTheme() {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      container.className = `tweakpane-theme-${this.theme}`;
+      this._batchUpdateStyles();
+      this._saveSettings();
+    }
+
+    _batchUpdateStyles() {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      requestAnimationFrame(() => {
+        const updates = [
+          { selector: '.title-bar', props: { background: 'header', color: 'text' } },
+          { selector: '.toolbar', props: { background: 'toolbar' } },
+          { selector: '#tweakpane-content', props: { background: 'content' } },
+          { selector: '.control-item', props: { background: 'background', borderColor: 'borderLight' } },
+          { selector: '.control-item label', props: { color: 'text' } },
+          { selector: '.group-header', props: { background: 'groupHeader', borderColor: 'groupBorder', color: 'text' } },
+          { selector: '.label-control', props: { color: 'textSecondary' } }
+        ];
+
+        updates.forEach(({ selector, props }) => {
+          const elements = container.querySelectorAll(selector);
+          elements.forEach(el => {
+            Object.entries(props).forEach(([prop, colorType]) => {
+              el.style[prop] = this._getThemeColor(colorType);
+            });
+          });
+        });
+
+        const inputs = container.querySelectorAll('input:not([type="color"]), select, textarea');
+        inputs.forEach(input => {
+          input.style.background = this._getThemeColor('background');
+          input.style.color = this._getThemeColor('text');
+          input.style.borderColor = this._getThemeColor('border');
+        });
+      });
+    }
+
+    _setupDragging(container, handle) {
+      let startX, startY, initialLeft, initialTop;
+
+      const onMouseMove = (e) => {
+        if (!this.isDragging || this.isLocked) return;
+        
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        
+        const newX = Math.max(0, Math.min(initialLeft + dx, window.innerWidth - container.offsetWidth));
+        const newY = Math.max(0, Math.min(initialTop + dy, window.innerHeight - container.offsetHeight));
+        
+        container.style.left = `${newX}px`;
+        container.style.top = `${newY}px`;
+      };
+
+      const onMouseUp = () => {
+        if (this.isDragging) {
+          this.isDragging = false;
+          document.body.style.userSelect = '';
+          container.style.transition = 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+          this.panelPosition.x = parseInt(container.style.left);
+          this.panelPosition.y = parseInt(container.style.top);
+          this._saveSettings();
+        }
+        
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+
+      handle.addEventListener('mousedown', (e) => {
+        if (e.target.tagName === 'BUTTON' || this.isLocked) return;
+        
+        this.isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        initialLeft = parseInt(container.style.left);
+        initialTop = parseInt(container.style.top);
+        
+        container.style.transition = 'none';
+        document.body.style.userSelect = 'none';
+        
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault();
+      });
+    }
+
+    _constrainPanelPosition() {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const maxX = window.innerWidth - rect.width;
+      const maxY = window.innerHeight - rect.height;
+
+      const x = Math.max(0, Math.min(this.panelPosition.x, maxX));
+      const y = Math.max(0, Math.min(this.panelPosition.y, maxY));
+
+      container.style.left = `${x}px`;
+      container.style.top = `${y}px`;
+      this.panelPosition = { x, y };
+    }
+
+    lockPanel() {
+      this.isLocked = true;
+      this._updateLockState();
+      this._saveSettings();
+    }
+
+    unlockPanel() {
+      this.isLocked = false;
+      this._updateLockState();
+      this._saveSettings();
+    }
+
+    togglePanelLock() {
+      this.isLocked = !this.isLocked;
+      this._updateLockState();
+      this._saveSettings();
+    }
+
+    isPanelLocked() {
+      return this.isLocked;
+    }
+
+    _updateLockState() {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      const titleBar = container.querySelector('.title-bar');
+      if (titleBar) {
+        titleBar.style.cursor = this.isLocked ? 'default' : 'move';
+      }
+
+      const lockButton = this.controlButtons.get('lock');
+      if (lockButton) {
+        lockButton.innerHTML = this.isLocked ? '🔒' : '🔓';
+        lockButton.title = this.isLocked ? '解锁面板' : '锁定面板';
+        lockButton.style.color = this.isLocked ? '#ff6b6b' : this._getThemeColor('text');
+        
+        if (this.isLocked) {
+          lockButton.style.animation = 'pulse 2s infinite';
+        } else {
+          lockButton.style.animation = 'none';
+        }
+      }
+
+      container.style.resize = this.isLocked ? 'none' : 'both';
+
+      this._updateControlButtonsState();
+
+      if (this.isLocked) {
+        container.classList.add('locked');
+      } else {
+        container.classList.remove('locked');
+      }
+    }
+
+    _updateControlButtonsState() {
+      const toolbarButtons = ['reset', 'showAll', 'hideAll', 'lockAll', 'unlockAll', 'imageManager', 'export', 'import'];
+      toolbarButtons.forEach(btnId => {
+        const button = this.controlButtons.get(btnId);
+        if (button) {
+          button.style.opacity = this.isLocked ? '0.6' : '0.9';
+          button.style.cursor = this.isLocked ? 'not-allowed' : 'pointer';
+          button.disabled = this.isLocked;
+        }
+      });
+
+      const titleBarButtons = ['minimize', 'fullscreen'];
+      titleBarButtons.forEach(btnId => {
+        const button = this.controlButtons.get(btnId);
+        if (button) {
+          button.style.opacity = this.isLocked ? '0.6' : '0.8';
+        }
+      });
+    }
+
+    lockControl(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      this._setControlLockState(controlName, true);
+    }
+
+    unlockControl(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      this._setControlLockState(controlName, false);
+    }
+
+    isControlLocked(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      return this.controlLocks.get(controlName) || false;
+    }
+
+    _setControlLockState(controlName, locked) {
+      const control = this.controls.get(controlName);
+      if (control) {
+        this.controlLocks.set(controlName, locked);
+        
+        if (locked) {
+          control.element.classList.add('locked');
+        } else {
+          control.element.classList.remove('locked');
+        }
+        
+        this._saveSettings();
+      }
+    }
+
+    lockAllControls() {
+      for (const [controlName] of this.controls) {
+        this._setControlLockState(controlName, true);
+      }
+    }
+
+    unlockAllControls() {
+      for (const [controlName] of this.controls) {
+        this._setControlLockState(controlName, false);
+      }
+    }
+
+    _toggleMinimize() {
+      if (this.isMinimized) {
+        this._restorePanel();
+      } else {
+        this._minimizePanel();
+      }
+    }
+
+    _minimizePanel() {
+      const container = this.containers.get('main');
+      const content = this.containers.get('content');
+      const toolbar = container?.querySelector('.toolbar');
+      
+      if (container && content && toolbar) {
+        this.preMinimizeSize = {
+          width: container.style.width,
+          height: container.style.height
+        };
+        
+        content.style.display = 'none';
+        toolbar.style.display = 'none';
+        container.style.height = 'auto';
+        container.style.minHeight = '60px';
+        
+        const minimizeButton = this.controlButtons.get('minimize');
+        if (minimizeButton) {
+          minimizeButton.innerHTML = '⧉';
+          minimizeButton.title = '恢复面板';
+        }
+        
+        this.isMinimized = true;
+        this._saveSettings();
+      }
+    }
+
+    _restorePanel() {
+      const container = this.containers.get('main');
+      const content = this.containers.get('content');
+      const toolbar = container?.querySelector('.toolbar');
+      
+      if (container && content && toolbar) {
+        content.style.display = 'block';
+        toolbar.style.display = 'flex';
+        
+        if (this.preMinimizeSize) {
+          container.style.width = this.preMinimizeSize.width;
+          container.style.height = this.preMinimizeSize.height;
+        } else {
+          container.style.height = `${this.panelSize.height}px`;
+        }
+        
+        container.style.minHeight = '120px';
+        
+        const minimizeButton = this.controlButtons.get('minimize');
+        if (minimizeButton) {
+          minimizeButton.innerHTML = '−';
+          minimizeButton.title = '最小化';
+        }
+        
+        this.isMinimized = false;
+        this._saveSettings();
+      }
+    }
+
+    _toggleFullscreen() {
+      if (this.isFullscreen) {
+        this._exitFullscreen();
+      } else {
+        this._enterFullscreen();
+      }
+    }
+
+    _enterFullscreen() {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      this.preFullscreenState = {
+        width: container.style.width,
+        height: container.style.height,
+        left: container.style.left,
+        top: container.style.top,
+        borderRadius: container.style.borderRadius
+      };
+
+      container.style.width = '100vw';
+      container.style.height = '100vh';
+      container.style.left = '0';
+      container.style.top = '0';
+      container.style.borderRadius = '0';
+      container.style.zIndex = '100000';
+
+      const fullscreenButton = this.controlButtons.get('fullscreen');
+      if (fullscreenButton) {
+        fullscreenButton.innerHTML = '⧉';
+        fullscreenButton.title = '退出全屏';
+      }
+
+      this.isFullscreen = true;
+      this._saveSettings();
+    }
+
+    _exitFullscreen() {
+      const container = this.containers.get('main');
+      if (!container || !this.preFullscreenState) return;
+
+      Object.assign(container.style, {
+        width: this.preFullscreenState.width,
+        height: this.preFullscreenState.height,
+        left: this.preFullscreenState.left,
+        top: this.preFullscreenState.top,
+        borderRadius: this.preFullscreenState.borderRadius,
+        zIndex: '10000'
+      });
+
+      const fullscreenButton = this.controlButtons.get('fullscreen');
+      if (fullscreenButton) {
+        fullscreenButton.innerHTML = '⛶';
+        fullscreenButton.title = '全屏';
+      }
+
+      this.isFullscreen = false;
+      this._saveSettings();
+    }
+
+    addStateButton(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const message = Scratch.Cast.toString(args.MESSAGE);
+      const initialState = Scratch.Cast.toNumber(args.INITIAL_STATE);
+      
+      this.buttonStates.set(name, initialState);
+      
+      this._addControl(
+        name,
+        'statebutton',
+        null,
+        { 
+          message: message,
+          initialState: initialState
+        }
+      );
+    }
+
+    getButtonState(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      return this.buttonStates.get(name) || 0;
+    }
+
+    setButtonState(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const state = Scratch.Cast.toNumber(args.STATE);
+      
+      if (this.buttonStates.has(name)) {
+        this.buttonStates.set(name, state);
+        this._updateButtonStateVisual(name, state);
+        this._saveSettings();
+      }
+    }
+
+    resetAllButtonStates() {
+      for (const [name, control] of this.controls) {
+        if (control.type === 'statebutton') {
+          const initialState = control.options.initialState || 0;
+          this.buttonStates.set(name, initialState);
+          this._updateButtonStateVisual(name, initialState);
+        }
+      }
+      this._saveSettings();
+    }
+
+    _updateButtonStateVisual(buttonName, state) {
+      const control = this.controls.get(buttonName);
+      if (!control || control.type !== 'statebutton') return;
+
+      const button = control.element.querySelector('button');
+      if (!button) return;
+
+      if (state === 1) {
+        button.style.background = 'linear-gradient(135deg, #357ABD, #2a5f9e)';
+        button.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.3)';
+        button.style.transform = 'translateY(1px)';
+        button.textContent = `${buttonName} (按下)`;
+      } else {
+        button.style.background = 'linear-gradient(135deg, #4A90E2, #357ABD)';
+        button.style.boxShadow = '0 4px 12px rgba(74, 144, 226, 0.3)';
+        button.style.transform = 'translateY(0)';
+        button.textContent = buttonName;
+      }
+    }
+
+    _ensurePanel() {
+      if (!this.isInitialized) {
+        this.createPanel();
+      }
+      return this.containers.has('main');
+    }
+
+    _addControl(name, type, value, options = {}) {
+      if (!this._ensurePanel()) return false;
+
+      const content = this.containers.get('content');
+      if (!content) return false;
+
+      this._hideEmptyState();
+
+      if (this.controls.has(name)) {
+        this._removeControl(name);
+      }
+
+      if (type !== 'button' && type !== 'label' && type !== 'image' && type !== 'statebutton') {
+        this.params.set(name, value);
+      }
+
+      const isVisible = this.controlVisibility.has(name) ? this.controlVisibility.get(name) : true;
+      this.controlVisibility.set(name, isVisible);
+
+      const isLocked = this.controlLocks.has(name) ? this.controlLocks.get(name) : false;
+      this.controlLocks.set(name, isLocked);
+
+      const controlDiv = this._createControlElement(name, type, isVisible, isLocked);
+      const inputElement = this._createInputElement(name, type, value, options, isLocked);
+
+      if (inputElement) {
+        controlDiv.appendChild(inputElement);
+        content.appendChild(controlDiv);
+        
+        this.controls.set(name, {
+          element: controlDiv,
+          type: type,
+          defaultValue: value,
+          options: options,
+          visible: isVisible,
+          locked: isLocked
+        });
+
+        this._saveSettings();
+        return true;
+      }
+      return false;
+    }
+
+    _createControlElement(name, type, isVisible, isLocked) {
+      const controlDiv = document.createElement('div');
+      controlDiv.className = `control-item control-${type} ${isLocked ? 'locked' : ''}`;
+      controlDiv.dataset.controlName = name;
+      
+      Object.assign(controlDiv.style, {
+        display: isVisible ? 'block' : 'none',
+        margin: '12px 0',
+        padding: type === 'label' ? '10px 14px' : '14px',
+        background: this._getThemeColor('background'),
+        border: type === 'label' ? 'none' : `1px solid ${this._getThemeColor('borderLight')}`,
+        borderRadius: type === 'label' ? '6px' : '10px',
+        transition: 'all 0.3s ease',
+        position: 'relative'
+      });
+
+      if (type !== 'button' && type !== 'label' && type !== 'image' && type !== 'statebutton') {
+        const deleteBtn = this._createDeleteButton(name);
+        controlDiv.appendChild(deleteBtn);
+      }
+
+      if (type !== 'label') {
+        const label = document.createElement('label');
+        label.textContent = name;
+        Object.assign(label.style, {
+          display: 'block',
+          marginBottom: '10px',
+          fontWeight: '600',
+          fontSize: '14px',
+          color: this._getThemeColor('text')
+        });
+        controlDiv.appendChild(label);
+      }
+
+      if (type !== 'label') {
+        this._setupControlHover(controlDiv, isVisible);
+      }
+
+      return controlDiv;
+    }
+
+    _setupControlHover(controlDiv, isVisible) {
+      controlDiv.addEventListener('mouseenter', () => {
+        if (isVisible && !controlDiv.classList.contains('locked')) {
+          controlDiv.style.borderColor = this._getThemeColor('border');
+          controlDiv.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+          controlDiv.style.transform = 'translateY(-2px)';
+        }
+      });
+      
+      controlDiv.addEventListener('mouseleave', () => {
+        if (isVisible && !controlDiv.classList.contains('locked')) {
+          controlDiv.style.borderColor = this._getThemeColor('borderLight');
+          controlDiv.style.boxShadow = 'none';
+          controlDiv.style.transform = 'translateY(0)';
+        }
+      });
+    }
+
+    _createDeleteButton(controlName) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.innerHTML = '×';
+      deleteBtn.title = '删除控件';
+      Object.assign(deleteBtn.style, {
+        position: 'absolute',
+        top: '8px',
+        right: '8px',
+        width: '20px',
+        height: '20px',
+        border: 'none',
+        background: 'transparent',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        fontSize: '16px',
+        fontWeight: 'bold',
+        color: this._getThemeColor('textSecondary'),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'all 0.2s ease',
+        opacity: '0.6'
+      });
+
+      deleteBtn.addEventListener('mouseenter', () => {
+        deleteBtn.style.background = '#ff4444';
+        deleteBtn.style.color = 'white';
+        deleteBtn.style.opacity = '1';
+      });
+      
+      deleteBtn.addEventListener('mouseleave', () => {
+        deleteBtn.style.background = 'transparent';
+        deleteBtn.style.color = this._getThemeColor('textSecondary');
+        deleteBtn.style.opacity = '0.6';
+      });
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.removeControl({ CONTROL_NAME: controlName });
+      });
+
+      return deleteBtn;
+    }
+
+    _createInputElement(name, type, value, options, isLocked) {
+      switch (type) {
+        case 'number': return this._createNumberInput(name, value, options, isLocked);
+        case 'slider': return this._createSliderInput(name, value, options, isLocked);
+        case 'toggle': return this._createToggleInput(name, value, isLocked);
+        case 'color': return this._createColorInput(name, value, isLocked);
+        case 'text': return this._createTextInput(name, value, isLocked);
+        case 'textarea': return this._createTextAreaInput(name, value, options, isLocked);
+        case 'button': return this._createButtonInput(name, options, isLocked);
+        case 'statebutton': return this._createStateButtonInput(name, options, isLocked);
+        case 'dropdown': return this._createDropdownInput(name, value, options, isLocked);
+        case 'image': return this._createImageInput(name, value, options, isLocked);
+        case 'label': return this._createLabelInput(name, value);
+        default: return null;
+      }
+    }
+
+    _createNumberInput(name, value, options, isLocked) {
+      const container = document.createElement('div');
+      container.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.value = value;
+      input.step = options.step || '1';
+      input.min = options.min;
+      input.max = options.max;
+      input.disabled = isLocked;
+      Object.assign(input.style, {
+        flex: '1',
+        padding: '10px',
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '8px',
+        background: this._getThemeColor('background'),
+        color: this._getThemeColor('text'),
+        fontSize: '14px',
+        transition: 'all 0.2s ease'
+      });
+
+      if (!isLocked) {
+        this._setupInputFocusEffects(input);
+        this._setupNumberInputEvents(input, name);
+      }
+
+      container.appendChild(input);
+      return container;
+    }
+
+    _setupInputFocusEffects(input) {
+      input.addEventListener('focus', () => {
+        input.style.borderColor = '#4A90E2';
+        input.style.boxShadow = '0 0 0 2px rgba(74, 144, 226, 0.2)';
+      });
+
+      input.addEventListener('blur', () => {
+        input.style.borderColor = this._getThemeColor('border');
+        input.style.boxShadow = 'none';
+      });
+    }
+
+    _setupNumberInputEvents(input, name) {
+      input.addEventListener('input', (e) => {
+        const newValue = parseFloat(e.target.value) || 0;
+        this.params.set(name, newValue);
+        this._saveSettings();
+      });
+    }
+
+    _createSliderInput(name, value, options, isLocked) {
+      const container = document.createElement('div');
+      
+      const valueDisplay = document.createElement('div');
+      valueDisplay.textContent = value;
+      Object.assign(valueDisplay.style, {
+        textAlign: 'center',
+        fontSize: '13px',
+        fontWeight: '600',
+        color: this._getThemeColor('text'),
+        marginBottom: '12px'
+      });
+
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = options.min || 0;
+      input.max = options.max || 100;
+      input.value = value;
+      input.step = options.step || '1';
+      input.disabled = isLocked;
+      Object.assign(input.style, {
+        width: '100%',
+        height: '6px',
+        borderRadius: '3px',
+        background: this._getThemeColor('toolbar'),
+        outline: 'none',
+        WebkitAppearance: 'none',
+        cursor: isLocked ? 'default' : 'pointer'
+      });
+
+      this._updateSliderStyle(input, value, options);
+      
+      if (!isLocked) {
+        this._setupSliderEvents(input, name, valueDisplay, options);
+      }
+
+      container.appendChild(valueDisplay);
+      container.appendChild(input);
+      return container;
+    }
+
+    _updateSliderStyle(input, value, options) {
+      const min = parseFloat(input.min);
+      const max = parseFloat(input.max);
+      const percentage = ((value - min) / (max - min)) * 100;
+      input.style.background = `linear-gradient(to right, #4A90E2 0%, #4A90E2 ${percentage}%, ${this._getThemeColor('toolbar')} ${percentage}%, ${this._getThemeColor('toolbar')} 100%)`;
+    }
+
+    _setupSliderEvents(input, name, valueDisplay, options) {
+      input.addEventListener('input', (e) => {
+        const newValue = parseFloat(e.target.value);
+        this.params.set(name, newValue);
+        valueDisplay.textContent = newValue;
+        this._updateSliderStyle(input, newValue, options);
+        this._saveSettings();
+      });
+    }
+
+    _createToggleInput(name, value, isLocked) {
+      const container = document.createElement('label');
+      Object.assign(container.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '14px',
+        cursor: isLocked ? 'default' : 'pointer'
+      });
+
+      const switchContainer = document.createElement('div');
+      Object.assign(switchContainer.style, {
+        position: 'relative',
+        width: '50px',
+        height: '26px',
+        background: value ? '#4A90E2' : this._getThemeColor('border'),
+        borderRadius: '13px',
+        transition: 'all 0.3s ease'
+      });
+
+      const switchKnob = document.createElement('div');
+      Object.assign(switchKnob.style, {
+        position: 'absolute',
+        top: '3px',
+        left: value ? '27px' : '3px',
+        width: '20px',
+        height: '20px',
+        background: '#ffffff',
+        borderRadius: '50%',
+        transition: 'all 0.3s ease',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.2)'
+      });
+
+      switchContainer.appendChild(switchKnob);
+
+      const text = document.createElement('span');
+      text.textContent = value ? '开启' : '关闭';
+      Object.assign(text.style, {
+        color: this._getThemeColor('text'),
+        fontSize: '14px',
+        fontWeight: '500'
+      });
+
+      if (!isLocked) {
+        container.addEventListener('click', () => {
+          const newValue = !this.params.get(name);
+          this.params.set(name, newValue);
+          
+          switchContainer.style.background = newValue ? '#4A90E2' : this._getThemeColor('border');
+          switchKnob.style.left = newValue ? '27px' : '3px';
+          text.textContent = newValue ? '开启' : '关闭';
+          
+          this._saveSettings();
+        });
+      }
+
+      container.appendChild(switchContainer);
+      container.appendChild(text);
+      return container;
+    }
+
+    _createColorInput(name, value, isLocked) {
+      const container = document.createElement('div');
+      container.style.cssText = 'display: flex; align-items: center; gap: 14px;';
+
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = this._normalizeColor(value);
+      input.disabled = isLocked;
+      Object.assign(input.style, {
+        width: '44px',
+        height: '34px',
+        border: 'none',
+        borderRadius: '8px',
+        cursor: isLocked ? 'default' : 'pointer'
+      });
+
+      const text = document.createElement('span');
+      text.textContent = value.toUpperCase();
+      Object.assign(text.style, {
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        color: this._getThemeColor('text'),
+        fontWeight: '500'
+      });
+
+      if (!isLocked) {
+        input.addEventListener('input', (e) => {
+          const newValue = e.target.value;
+          this.params.set(name, newValue);
+          text.textContent = newValue.toUpperCase();
+          this._saveSettings();
+        });
+      }
+
+      container.appendChild(input);
+      container.appendChild(text);
+      return container;
+    }
+
+    _createTextInput(name, value, isLocked) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = value;
+      input.placeholder = '输入文本...';
+      input.disabled = isLocked;
+      Object.assign(input.style, {
+        width: '100%',
+        padding: '10px',
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '8px',
+        background: this._getThemeColor('background'),
+        color: this._getThemeColor('text'),
+        fontSize: '14px',
+        transition: 'all 0.2s ease'
+      });
+
+      if (!isLocked) {
+        this._setupInputFocusEffects(input);
+        input.addEventListener('input', (e) => {
+          this.params.set(name, e.target.value);
+          this._saveSettings();
+        });
+      }
+
+      return input;
+    }
+
+    _createTextAreaInput(name, value, options, isLocked) {
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.placeholder = '输入多行文本...';
+      textarea.rows = options.rows || 3;
+      textarea.disabled = isLocked;
+      Object.assign(textarea.style, {
+        width: '100%',
+        padding: '10px',
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '8px',
+        background: this._getThemeColor('background'),
+        color: this._getThemeColor('text'),
+        fontSize: '14px',
+        fontFamily: 'inherit',
+        resize: 'vertical',
+        minHeight: '60px',
+        transition: 'all 0.2s ease',
+        lineHeight: '1.4'
+      });
+
+      if (!isLocked) {
+        this._setupInputFocusEffects(textarea);
+        textarea.addEventListener('input', (e) => {
+          this.params.set(name, e.target.value);
+          this._saveSettings();
+        });
+      }
+
+      return textarea;
+    }
+
+    _createButtonInput(name, options, isLocked) {
+      const button = document.createElement('button');
+      button.textContent = name;
+      button.disabled = isLocked;
+      Object.assign(button.style, {
+        width: '100%',
+        padding: '12px',
+        border: 'none',
+        borderRadius: '8px',
+        background: isLocked ? 
+          'linear-gradient(135deg, #cccccc, #aaaaaa)' : 
+          'linear-gradient(135deg, #4A90E2, #357ABD)',
+        color: 'white',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: isLocked ? 'default' : 'pointer',
+        transition: 'all 0.3s ease',
+        boxShadow: isLocked ? 'none' : '0 4px 12px rgba(74, 144, 226, 0.3)'
+      });
+
+      if (!isLocked) {
+        button.addEventListener('mouseenter', () => {
+          if (options.type !== 'statebutton' || this.buttonStates.get(name) === 0) {
+            button.style.background = 'linear-gradient(135deg, #357ABD, #2a5f9e)';
+            button.style.transform = 'translateY(-2px)';
+            button.style.boxShadow = '0 6px 16px rgba(74, 144, 226, 0.4)';
+          }
+        });
+        
+        button.addEventListener('mouseleave', () => {
+          if (options.type !== 'statebutton' || this.buttonStates.get(name) === 0) {
+            button.style.background = 'linear-gradient(135deg, #4A90E2, #357ABD)';
+            button.style.transform = 'translateY(0)';
+            button.style.boxShadow = '0 4px 12px rgba(74, 144, 226, 0.3)';
+          }
+        });
+
+        button.addEventListener('click', () => {
+          if (options.type === 'statebutton') {
+            const currentState = this.buttonStates.get(name) || 0;
+            const newState = currentState === 0 ? 1 : 0;
+            this.buttonStates.set(name, newState);
+            this._updateButtonStateVisual(name, newState);
+            
+            button.style.transform = 'scale(0.98)';
+            setTimeout(() => {
+              this._updateButtonStateVisual(name, newState);
+            }, 100);
+          } else {
+            button.style.transform = 'scale(0.98)';
+            setTimeout(() => {
+              button.style.transform = 'scale(1)';
+            }, 100);
+          }
+
+          if (options.message && Scratch.vm) {
+            Scratch.vm.postIOData('event', {
+              type: 'broadcast',
+              data: { name: options.message }
+            });
+          }
+          
+          this._saveSettings();
+        });
+      }
+
+      return button;
+    }
+
+    _createStateButtonInput(name, options, isLocked) {
+      const initialState = options.initialState || 0;
+      this.buttonStates.set(name, initialState);
+      
+      const button = this._createButtonInput(name, { ...options, type: 'statebutton' }, isLocked);
+      
+      this._updateButtonStateVisual(name, initialState);
+      
+      return button;
+    }
+
+    _createDropdownInput(name, value, options, isLocked) {
+      const select = document.createElement('select');
+      select.disabled = isLocked;
+      Object.assign(select.style, {
+        width: '100%',
+        padding: '10px',
+        border: `1px solid ${this._getThemeColor('border')}`,
+        borderRadius: '8px',
+        background: this._getThemeColor('background'),
+        color: this._getThemeColor('text'),
+        fontSize: '14px',
+        cursor: isLocked ? 'default' : 'pointer',
+        transition: 'all 0.2s ease'
+      });
+
+      const optionList = (options.options || '').split(',').map(opt => opt.trim());
+      optionList.forEach(option => {
+        const optionElement = document.createElement('option');
+        optionElement.value = option;
+        optionElement.textContent = option;
+        if (option === value) optionElement.selected = true;
+        select.appendChild(optionElement);
+      });
+
+      if (!isLocked) {
+        this._setupInputFocusEffects(select);
+        select.addEventListener('change', (e) => {
+          this.params.set(name, e.target.value);
+          this._saveSettings();
+        });
+      }
+
+      return select;
+    }
+
+    _createLabelInput(name, value) {
+      const label = document.createElement('div');
+      label.className = 'label-control';
+      label.textContent = value;
+      Object.assign(label.style, {
+        color: this._getThemeColor('textSecondary'),
+        fontSize: '13px',
+        lineHeight: '1.5',
+        wordWrap: 'break-word'
+      });
+      return label;
+    }
+
+    addNumber(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'number',
+        Scratch.Cast.toNumber(args.VALUE),
+        { step: Scratch.Cast.toNumber(args.STEP) }
+      );
+    }
+
+    addSlider(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'slider',
+        Scratch.Cast.toNumber(args.VALUE),
+        {
+          min: Scratch.Cast.toNumber(args.MIN),
+          max: Scratch.Cast.toNumber(args.MAX),
+          step: Scratch.Cast.toNumber(args.STEP)
+        }
+      );
+    }
+
+    addToggle(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'toggle',
+        Scratch.Cast.toBoolean(args.VALUE)
+      );
+    }
+
+    addColor(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'color',
+        Scratch.Cast.toString(args.VALUE)
+      );
+    }
+
+    addText(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'text',
+        Scratch.Cast.toString(args.VALUE)
+      );
+    }
+
+    addTextArea(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'textarea',
+        Scratch.Cast.toString(args.VALUE),
+        { rows: Scratch.Cast.toNumber(args.ROWS) }
+      );
+    }
+
+    addButton(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'button',
+        null,
+        { message: Scratch.Cast.toString(args.MESSAGE) }
+      );
+    }
+
+    addDropdown(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'dropdown',
+        Scratch.Cast.toString(args.VALUE),
+        { options: Scratch.Cast.toString(args.OPTIONS) }
+      );
+    }
+
+    addLabel(args) {
+      this._addControl(
+        Scratch.Cast.toString(args.NAME),
+        'label',
+        Scratch.Cast.toString(args.CONTENT)
+      );
+    }
+
+    removeControl(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      this._removeControl(controlName);
+    }
+
+    _removeControl(name) {
+      const control = this.controls.get(name);
+      if (control) {
+        control.element.remove();
+        this.controls.delete(name);
+        this.params.delete(name);
+        this.controlVisibility.delete(name);
+        this.controlLocks.delete(name);
+        this.buttonStates.delete(name);
+        this._updateEmptyState();
+        this._saveSettings();
+      }
+    }
+
+    showControl(args) {
+      this._setControlVisibility(Scratch.Cast.toString(args.CONTROL_NAME), true);
+    }
+
+    hideControl(args) {
+      this._setControlVisibility(Scratch.Cast.toString(args.CONTROL_NAME), false);
+    }
+
+    toggleControl(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      const control = this.controls.get(controlName);
+      if (control) {
+        this._setControlVisibility(controlName, !control.visible);
+      }
+    }
+
+    _setControlVisibility(controlName, visible) {
+      const control = this.controls.get(controlName);
+      if (control) {
+        control.visible = visible;
+        control.element.style.display = visible ? 'block' : 'none';
+        this.controlVisibility.set(controlName, visible);
+        this._updateEmptyState();
+        this._saveSettings();
+      }
+    }
+
+    showAllControls() {
+      for (const [controlName] of this.controls) {
+        this._setControlVisibility(controlName, true);
+      }
+    }
+
+    hideAllControls() {
+      for (const [controlName] of this.controls) {
+        this._setControlVisibility(controlName, false);
+      }
+    }
+
+    isControlVisible(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      const control = this.controls.get(controlName);
+      return control ? control.visible : false;
+    }
+
+    createGroup(args) {
+      if (!this._ensurePanel()) return;
+      this._createGroupElement(Scratch.Cast.toString(args.GROUP_NAME));
+    }
+
+    _createGroupElement(groupName) {
+      const content = this.containers.get('content');
+      if (!content || this.groups.has(groupName)) return;
+
+      const isVisible = this.groupVisibility.has(groupName) ? this.groupVisibility.get(groupName) : true;
+      this.groupVisibility.set(groupName, isVisible);
+
+      const groupDiv = document.createElement('div');
+      groupDiv.className = 'control-group';
+      groupDiv.dataset.groupName = groupName;
+      groupDiv.style.display = isVisible ? 'block' : 'none';
+
+      const groupHeader = this._createGroupHeader(groupName, isVisible);
+      const groupContent = this._createGroupContent();
+
+      groupDiv.appendChild(groupHeader);
+      groupDiv.appendChild(groupContent);
+      content.appendChild(groupDiv);
+
+      this.groups.set(groupName, {
+        element: groupDiv,
+        header: groupHeader,
+        content: groupContent,
+        controls: new Set(),
+        visible: isVisible
+      });
+
+      this._saveSettings();
+    }
+
+    _createGroupHeader(groupName, isVisible) {
+      const header = document.createElement('div');
+      header.className = 'group-header';
+      Object.assign(header.style, {
+        padding: '12px 14px',
+        background: this._getThemeColor('groupHeader'),
+        border: `1px solid ${this._getThemeColor('groupBorder')}`,
+        borderRadius: '8px',
+        margin: '16px 0 10px 0',
+        cursor: 'pointer',
+        userSelect: 'none',
+        fontWeight: '600',
+        fontSize: '14px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        color: this._getThemeColor('text'),
+        transition: 'all 0.3s ease'
+      });
+
+      const title = document.createElement('span');
+      title.textContent = `📁 ${groupName}`;
+      header.appendChild(title);
+
+      const toggleIcon = document.createElement('span');
+      toggleIcon.textContent = isVisible ? '▼' : '▶';
+      toggleIcon.style.cssText = 'font-size: 12px; transition: transform 0.3s ease;';
+      header.appendChild(toggleIcon);
+
+      header.addEventListener('click', () => {
+        this.toggleGroup({ GROUP_NAME: groupName });
+      });
+
+      return header;
+    }
+
+    _createGroupContent() {
+      const content = document.createElement('div');
+      content.className = 'group-content';
+      content.style.cssText = 'padding: 0 6px; transition: all 0.3s ease;';
+      return content;
+    }
+
+    addToGroup(args) {
+      this._moveControlToGroup(
+        Scratch.Cast.toString(args.CONTROL_NAME),
+        Scratch.Cast.toString(args.GROUP_NAME)
+      );
+    }
+
+    _moveControlToGroup(controlName, groupName) {
+      const control = this.controls.get(controlName);
+      const group = this.groups.get(groupName);
+      
+      if (!control || !group) return;
+      
+      control.element.remove();
+      group.content.appendChild(control.element);
+      group.controls.add(controlName);
+      control.group = groupName;
+      this._saveSettings();
+    }
+
+    showGroup(args) {
+      this._setGroupVisibility(Scratch.Cast.toString(args.GROUP_NAME), true);
+    }
+
+    hideGroup(args) {
+      this._setGroupVisibility(Scratch.Cast.toString(args.GROUP_NAME), false);
+    }
+
+    toggleGroup(args) {
+      const groupName = Scratch.Cast.toString(args.GROUP_NAME);
+      const group = this.groups.get(groupName);
+      if (group) {
+        this._setGroupVisibility(groupName, !group.visible);
+      }
+    }
+
+    _setGroupVisibility(groupName, visible) {
+      const group = this.groups.get(groupName);
+      if (group) {
+        group.visible = visible;
+        group.element.style.display = visible ? 'block' : 'none';
+        
+        const toggleIcon = group.header.querySelector('span:last-child');
+        if (toggleIcon) {
+          toggleIcon.textContent = visible ? '▼' : '▶';
+          toggleIcon.style.transform = visible ? 'rotate(0deg)' : 'rotate(-90deg)';
+        }
+        
+        for (const controlName of group.controls) {
+          const control = this.controls.get(controlName);
+          if (control) {
+            control.element.style.display = visible ? 'block' : 'none';
+            control.visible = visible;
+          }
+        }
+        
+        this.groupVisibility.set(groupName, visible);
+        this._updateEmptyState();
+        this._saveSettings();
+      }
+    }
+
+    getValue(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const value = this.params.get(name);
+      return value !== undefined ? value : 0;
+    }
+
+    getStringValue(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const value = this.params.get(name);
+      return value !== undefined ? String(value) : '';
+    }
+
+    setValue(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      let value = Scratch.Cast.toString(args.VALUE);
+      
+      const numValue = parseFloat(value);
+      if (!isNaN(numValue)) {
+        this.params.set(name, numValue);
+      } else if (value.toLowerCase() === 'true') {
+        this.params.set(name, true);
+      } else if (value.toLowerCase() === 'false') {
+        this.params.set(name, false);
+      } else {
+        this.params.set(name, value);
+      }
+      
+      this._saveSettings();
+    }
+
+    setStringValue(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const value = Scratch.Cast.toString(args.VALUE);
+      this.params.set(name, value);
+      this._saveSettings();
+    }
+
+    resetAllValues() {
+      for (const [name, control] of this.controls) {
+        if (control.type !== 'button' && control.type !== 'label' && control.type !== 'image' && control.type !== 'statebutton') {
+          this._resetControlToDefault(name, control);
+        }
+      }
+      this._saveSettings();
+    }
+
+    resetControlToDefault(args) {
+      const controlName = Scratch.Cast.toString(args.CONTROL_NAME);
+      const control = this.controls.get(controlName);
+      if (control && control.type !== 'button' && control.type !== 'label' && control.type !== 'image' && control.type !== 'statebutton') {
+        this._resetControlToDefault(controlName, control);
+        this._saveSettings();
+      }
+    }
+
+    _resetControlToDefault(name, control) {
+      this.params.set(name, control.defaultValue);
+      
+      const input = control.element.querySelector('input, select, textarea');
+      if (input) {
+        if (control.type === 'toggle') {
+          const switchContainer = control.element.querySelector('div');
+          const switchKnob = switchContainer.querySelector('div');
+          const text = control.element.querySelector('span:last-child');
+          
+          switchContainer.style.background = control.defaultValue ? '#4A90E2' : this._getThemeColor('border');
+          switchKnob.style.left = control.defaultValue ? '27px' : '3px';
+          text.textContent = control.defaultValue ? '开启' : '关闭';
+        } else if (control.type === 'slider') {
+          const valueDisplay = control.element.querySelector('div:first-child');
+          valueDisplay.textContent = control.defaultValue;
+          input.value = control.defaultValue;
+          this._updateSliderStyle(input, control.defaultValue, control.options);
+        } else {
+          input.value = control.defaultValue;
+        }
+      }
+    }
+
+    getStringLength(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const value = this.params.get(name);
+      return value !== undefined ? String(value).length : 0;
+    }
+
+    stringContains(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const searchText = Scratch.Cast.toString(args.TEXT);
+      const value = this.params.get(name);
+      return value !== undefined ? String(value).includes(searchText) : false;
+    }
+
+    stringStartsWith(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const searchText = Scratch.Cast.toString(args.TEXT);
+      const value = this.params.get(name);
+      return value !== undefined ? String(value).startsWith(searchText) : false;
+    }
+
+    stringEndsWith(args) {
+      const name = Scratch.Cast.toString(args.NAME);
+      const searchText = Scratch.Cast.toString(args.TEXT);
+      const value = this.params.get(name);
+      return value !== undefined ? String(value).endsWith(searchText) : false;
+    }
+
+    setPanelPosition(args) {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      const x = Scratch.Cast.toNumber(args.X);
+      const y = Scratch.Cast.toNumber(args.Y);
+
+      container.style.left = x + 'px';
+      container.style.top = y + 'px';
+
+      this.panelPosition = { x, y };
+      this._constrainPanelPosition();
+      this._saveSettings();
+    }
+
+    setPanelSize(args) {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      const width = Scratch.Cast.toNumber(args.WIDTH);
+      const height = Scratch.Cast.toNumber(args.HEIGHT);
+
+      container.style.width = Math.max(250, width) + 'px';
+      container.style.height = Math.max(150, height) + 'px';
+
+      this.panelSize = { width, height };
+      this._constrainPanelPosition();
+      this._saveSettings();
+    }
+
+    setPanelCorner(args) {
+      const container = this.containers.get('main');
+      if (!container) return;
+
+      const corner = Scratch.Cast.toString(args.CORNER);
+      const rect = container.getBoundingClientRect();
+      
+      let x, y;
+      
+      switch (corner) {
+        case 'top-left': x = 20; y = 20; break;
+        case 'top-right': x = window.innerWidth - rect.width - 20; y = 20; break;
+        case 'bottom-left': x = 20; y = window.innerHeight - rect.height - 20; break;
+        case 'bottom-right': x = window.innerWidth - rect.width - 20; y = window.innerHeight - rect.height - 20; break;
+        case 'center': x = (window.innerWidth - rect.width) / 2; y = (window.innerHeight - rect.height) / 2; break;
+        default: x = 20; y = 20;
+      }
+
+      container.style.left = x + 'px';
+      container.style.top = y + 'px';
+      this.panelPosition = { x, y };
+      this._saveSettings();
+    }
+
+    setPanelTheme(args) {
+      this.theme = Scratch.Cast.toString(args.THEME);
+      this._refreshTheme();
+    }
+
+    setPanelOpacity(args) {
+      this.panelOpacity = Math.max(10, Math.min(100, Scratch.Cast.toNumber(args.OPACITY)));
+      const container = this.containers.get('main');
+      if (container) {
+        container.style.opacity = `${this.panelOpacity}%`;
+      }
+      this._saveSettings();
+    }
+
+    showPanel() {
+      const container = this.containers.get('main');
+      if (container) {
+        container.style.display = 'flex';
+      }
+    }
+
+    hidePanel() {
+      const container = this.containers.get('main');
+      if (container) {
+        container.style.display = 'none';
+      }
+    }
+
+    togglePanel() {
+      const container = this.containers.get('main');
+      if (container) {
+        container.style.display = container.style.display === 'none' ? 'flex' : 'none';
+      }
+    }
+
+    destroyPanel() {
+      this._removeExistingPanel();
+      this._removeGlobalListeners();
+      this.controlButtons.clear();
+    }
+
+    _removeExistingPanel() {
+      const existing = document.getElementById('tweakpane-ultimate');
+      if (existing) {
+        existing.remove();
+      }
+      this.containers.clear();
+      this.controlButtons.clear();
+      this.isInitialized = false;
+    }
+
+    _hideEmptyState() {
+      const content = this.containers.get('content');
+      if (content) {
+        const emptyState = content.querySelector('.empty-state');
+        if (emptyState) emptyState.style.display = 'none';
+      }
+    }
+
+    _updateEmptyState() {
+      const content = this.containers.get('content');
+      if (!content) return;
+
+      const emptyState = content.querySelector('.empty-state');
+      if (!emptyState) return;
+
+      const hasVisibleControls = Array.from(this.controls.values()).some(control => control.visible);
+      emptyState.style.display = hasVisibleControls ? 'none' : 'block';
+    }
+
+    _normalizeColor(color) {
+      if (color.startsWith('#')) return color;
+      if (color.startsWith('rgb')) {
+        const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (match) {
+          const r = parseInt(match[1]).toString(16).padStart(2, '0');
+          const g = parseInt(match[2]).toString(16).padStart(2, '0');
+          const b = parseInt(match[3]).toString(16).padStart(2, '0');
+          return `#${r}${g}${b}`;
+        }
+      }
+      return '#ff0055';
+    }
+
+    _exportSettings() {
+      const settings = {
+        params: Object.fromEntries(this.params),
+        controls: Array.from(this.controls.entries()).map(([name, control]) => ({
+          name,
+          type: control.type,
+          defaultValue: control.defaultValue,
+          options: control.options,
+          visible: control.visible,
+          locked: control.locked,
+          group: control.group
+        })),
+        groups: Array.from(this.groups.entries()).map(([name, group]) => ({
+          name,
+          visible: group.visible,
+          controls: Array.from(group.controls)
+        })),
+        position: this.panelPosition,
+        size: this.panelSize,
+        theme: this.theme,
+        opacity: this.panelOpacity,
+        isLocked: this.isLocked,
+        controlLocks: Array.from(this.controlLocks.entries()),
+        images: Array.from(this.images.entries()),
+        buttonStates: Array.from(this.buttonStates.entries()),
+        version: '3.0.4'
+      };
+      
+      const dataStr = JSON.stringify(settings, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `tweakpane-settings-${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      
+      URL.revokeObjectURL(url);
+    }
+
+    _importSettings() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      
+      input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const settings = JSON.parse(event.target.result);
+            this._applyImportedSettings(settings);
+          } catch (error) {
+            console.error('导入设置失败:', error);
+            alert('导入设置失败，文件格式不正确');
+          }
+        };
+        reader.readAsText(file);
+      });
+      input.click();
+    }
+
+    _applyImportedSettings(settings) {
+      this._clearAllControls();
+      this.groups.clear();
+      this.images.clear();
+      this.buttonStates.clear();
+
+      if (settings.position) {
+        this.panelPosition = settings.position;
+        this.setPanelPosition({ X: settings.position.x, Y: settings.position.y });
+      }
+      
+      if (settings.size) {
+        this.panelSize = settings.size;
+        this.setPanelSize({ WIDTH: settings.size.width, HEIGHT: settings.size.height });
+      }
+      
+      if (settings.theme) {
+        this.setPanelTheme({ THEME: settings.theme });
+      }
+      
+      if (settings.opacity) {
+        this.setPanelOpacity({ OPACITY: settings.opacity });
+      }
+
+      if (settings.isLocked !== undefined) {
+        this.isLocked = settings.isLocked;
+        this._updateLockState();
+      }
+
+      if (settings.groups) {
+        settings.groups.forEach(group => {
+          this._createGroupElement(group.name);
+          if (group.visible !== undefined) {
+            this._setGroupVisibility(group.name, group.visible);
+          }
+        });
+      }
+
+      if (settings.controls) {
+        settings.controls.forEach(control => {
+          this._addControl(control.name, control.type, control.defaultValue, control.options);
+          if (control.visible !== undefined) {
+            this._setControlVisibility(control.name, control.visible);
+          }
+          if (control.locked !== undefined) {
+            this._setControlLockState(control.name, control.locked);
+          }
+          if (control.group) {
+            this._moveControlToGroup(control.name, control.group);
+          }
+        });
+      }
+
+      if (settings.images) {
+        this.images = new Map(settings.images);
+      }
+
+      if (settings.buttonStates) {
+        this.buttonStates = new Map(settings.buttonStates);
+        
+        for (const [name, state] of this.buttonStates) {
+          this._updateButtonStateVisual(name, state);
+        }
+      }
+
+      if (settings.params) {
+        Object.entries(settings.params).forEach(([name, value]) => {
+          this.params.set(name, value);
+        });
+      }
+    }
+
+    _clearAllControls() {
+      for (const [name] of this.controls) {
+        this._removeControl(name);
+      }
+      this._updateEmptyState();
+    }
+
+    getPanelX() { return this.panelPosition.x; }
+    getPanelY() { return this.panelPosition.y; }
+    getPanelWidth() { return this.panelSize.width; }
+    getPanelHeight() { return this.panelSize.height; }
+    getControlCount() { return this.controls.size; }
+    getVisibleControlCount() { 
+      return Array.from(this.controls.values()).filter(control => control.visible).length; 
+    }
+  }
+
+  Scratch.extensions.register(new TweakpaneUltimate());
+})(Scratch);
